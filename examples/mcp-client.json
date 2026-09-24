@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "basin": {
+      "command": "wsl.exe",
+      "args": [
+        "bash",
+        "/mnt/c/Users/Logan/Documents/GitHub/basin/scripts/mcp_in_container.sh"
+      ]
+    }
+  }
+}

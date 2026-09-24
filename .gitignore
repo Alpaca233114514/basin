@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local Basin evidence snapshots and generated reports
+.basin/
+outputs/
