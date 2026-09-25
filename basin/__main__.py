@@ -10,6 +10,7 @@ from .report import render
 from .store import Store
 from .api import BasinAPI, ToolError, error_result, parse_sources
 from .torchlens_data import analyze_torchlens, import_torchlens
+from .training_config import import_training_config
 
 
 def main(argv=None):
@@ -37,6 +38,13 @@ def main(argv=None):
     p = sub.add_parser("import-torchlens", help="Import a Basin TorchLens JSON export")
     p.add_argument("path")
     p.add_argument("--id", required=True)
+    p = sub.add_parser("import-training-config", help="Import a sealed training config bundle or a version-2 plan")
+    p.add_argument("source", help="Trusted source root")
+    p.add_argument("path", help="Bundle directory or plan JSON relative to source root")
+    p.add_argument("--id", required=True)
+    p.add_argument("--launch", help="Launch manifest relative to source root")
+    p.add_argument("--runtime", help="Runtime experiment relative to source root")
+    p.add_argument("--resolved-plan", help="Resolved v2 plan JSON for YAML or inherited source plans")
     p = sub.add_parser("analyze-torchlens", help="Analyze saved activations and observed graph references")
     p.add_argument("id")
     for command in ("show", "analyze", "verify", "events", "artifact"):
@@ -95,6 +103,10 @@ def main(argv=None):
             result = import_native(store, args.path, args.id)
         elif args.command == "import-torchlens":
             result = import_torchlens(store, args.path, args.id)
+        elif args.command == "import-training-config":
+            result = import_training_config(store, args.source, args.path, args.id,
+                                            launch_path=args.launch, runtime_path=args.runtime,
+                                            resolved_plan_path=args.resolved_plan)
         elif args.command == "analyze-torchlens":
             result = analyze_torchlens(store, args.id)
         elif args.command == "verify":

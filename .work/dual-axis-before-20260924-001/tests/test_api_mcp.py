@@ -33,7 +33,7 @@ class APITests(unittest.TestCase):
         self.api = BasinAPI(self.store.root)
 
     def test_default_read_only_catalog(self):
-        self.assertEqual(len(self.api.tools()), 12)
+        self.assertEqual(len(self.api.tools()), 9)
         self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in self.api.tools()))
         with self.assertRaises(ToolError):
             self.api.call("basin_import_native", {})
@@ -74,7 +74,7 @@ class APITests(unittest.TestCase):
             api.call("basin_import_native", {"source": "input", "path": "../inputs/sample.json", "run_id": "escape"})
         with self.assertRaises(ToolError):
             api.call("basin_import_native", {"source": "unknown", "path": "sample.json", "run_id": "escape"})
-        self.assertEqual(len(api.tools()), 17)
+        self.assertEqual(len(api.tools()), 12)
 
     def test_identity_claim_and_independent_source_bytes(self):
         data = b"source bytes\n"
@@ -109,7 +109,7 @@ class APITests(unittest.TestCase):
         self.assertIn("error", server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
         self.assertEqual(server.handle(INIT)["result"]["protocolVersion"], "2025-11-25")
         self.assertIsNone(server.handle(READY))
-        self.assertEqual(len(server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]), 12)
+        self.assertEqual(len(server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]), 9)
         linked = server.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
             "name": "basin_check_identity", "arguments": {"run_id": "sample",
                 "pointer": "/source_run", "expected": "sample"}}})

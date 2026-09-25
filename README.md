@@ -18,7 +18,7 @@ echo '{"run_id":"rosetta-gate4-1002","step":125,"field":"/action"}' | python -m 
 python -m basin --store outputs/rosetta-demo-v2/history mcp
 ```
 
-默认提供 9 个只读工具：`basin_history`、`basin_get_run`、`basin_events`、`basin_read_artifact`、`basin_analyze`、`basin_analyze_torchlens`、`basin_compare`、`basin_verify`、`basin_check_identity`。它们共用同一 Python API，返回可分页、有证据位置的结构化结果。需要导入或核对原文件 SHA 时通过 `--source alias=directory` 显式开放来源根。
+默认提供 12 个只读工具，包括 `basin_history`、`basin_get_run`、`basin_events`、`basin_read_artifact`、`basin_analyze`、`basin_analyze_torchlens`、`basin_compare`、`basin_verify`、`basin_check_identity` 和三个双时间轴查询工具。它们共用同一 Python API，返回可分页、有证据位置的结构化结果。需要导入或核对原文件 SHA 时通过 `--source alias=directory` 显式开放来源根。
 
 Canonical training、checkpoint 2500/5000 与 004/005 Gate 的 create-only 历史导入见 [操作记录](docs/canonical-import-2026-09-22.md)；它只读核对既存原始字节，不运行模型。
 
@@ -82,6 +82,43 @@ python -m basin --store outputs/rosetta-demo-v2/history verify rosetta-gate4-100
 ```
 
 原始 artifact 行号从 `events` / `compare` 的 evidence 字段获取。通用采集器（未来 hooks、NNsight 等）可输出 [native envelope](docs/design.md)，通过 `import-native file.json --id run-id` 接入。实时模型 hook 和自动修改模型仍未实现。
+
+## 训练超参数与训练集身份
+
+新的 Rosetta SmolVLA v2 `train` / `smoke` 启动会在持久 `launch` 目录生成
+`<run_name>-training-config/`。其中包含已组装 CLI 对应的超参数、所选训练 episode、
+数据集 identifier/revision、训练视图与归一化报告 SHA，以及原始计划、launch manifest
+和 runtime experiment 的封存副本。快照状态 `launch_prepared` 只证明启动前登记，
+不证明 optimizer 已更新或训练完成。`preflight` 不生成训练快照。
+
+将证据目录以只读来源根提供给 Basin，然后导入新 ID：
+
+```bash
+python -m basin --store outputs/new/history import-training-config \
+  /evidence experiment/launch/run-001-training-config --id run-001-config
+python -m basin --store outputs/new/history show run-001-config \
+  --pointer /parameters/training/dataset
+```
+
+上例中 `/evidence` 是来源根，余下部分是根内相对路径。已有 v2 原始计划也可单独导入
+为 `plan_only`；若同时提供 launch manifest 和 runtime experiment，则核对文件 SHA
+并标记 `launch_prepared`：
+
+```bash
+python -m basin --store outputs/new/history import-training-config \
+  /evidence configs/plan.json --launch runs/launch/run.json \
+  --runtime runs/launch/run-runtime-experiment.json --id historical-config
+```
+
+旧 v2 YAML 或含 `extends` 的计划须另给 Rosetta 解析后的 JSON：
+`--resolved-plan configs/resolved-plan.json`。Rosetta 提供文件级
+`scripts/export_smolvla_v2_resolved_plan.py --plan <原计划> --output <新JSON>`；
+Basin 保存原计划字节并核对 launch 中的原计划 SHA，但将解析结果标记为
+`operator_supplied`，不把 Basin 未独立解析的 YAML 说成已复验。
+
+模型入口为 `basin_import_training_config`，只有配置 `--source alias=directory` 后才开放；
+所用路径必须在该别名之内。所有导入 create-only，保留原始字节，按 `source_run` 关联其他证据。
+超参数位于 `/parameters/training`，身份位于 `/parameters/identity`；未知值为 `null`。
 
 ## TorchLens JSON 离线导入与分析
 

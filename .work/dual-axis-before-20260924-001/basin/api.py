@@ -1,8 +1,6 @@
 """Model-facing tool API shared by the CLI and MCP stdio server."""
 
 import math
-import base64
-import hashlib
 from pathlib import Path
 
 from .adapters import import_gate, import_native, import_trace
@@ -11,8 +9,6 @@ from .identity import check_identity
 from .io import child, dumps, loads, outside, read_bytes
 from .store import Store
 from .torchlens_data import analyze_torchlens, import_torchlens
-from .training_config import import_training_config
-from .dual_axis import branch_compare, import_dual_axis, locate_deviation, timeline
 
 
 class ToolError(ValueError):
@@ -35,14 +31,6 @@ def tool(name, description, properties, required=(), write=False):
 
 
 READ_TOOLS = [
-    tool("basin_timeline", "Read dual-axis events and sampling coverage; update and rollout_step remain separate.",
-         dict(PAGE, run_id=STRING, axis=STRING, field=STRING, start={"type": "integer", "minimum": 0},
-              end={"type": "integer", "minimum": 0}), ("run_id",)),
-    tool("basin_locate_deviation", "Locate observed regression intervals, absolute failures, recovery and evidence gaps; no causal claim.",
-         dict(PAGE, run_id=STRING, axis={"type": "string", "enum": ["probe", "execution", "training"]}, metric=STRING,
-              section={"type": "string", "enum": ["deviations", "absolute_failures", "gaps", "trends"]}), ("run_id",)),
-    tool("basin_branch_compare", "Compare explicitly aligned branch evidence and identities; research ancestry is not weight ancestry.",
-         dict(PAGE, left=STRING, right=STRING), ("left", "right")),
     tool("basin_history", "List recorded run units and integrity. Filter by source_run or evidence_kind; paginated.",
          dict(PAGE, source_run=STRING, evidence_kind=STRING)),
     tool("basin_get_run", "Read run metadata. For parameters use JSON Pointer, e.g. /parameters/options. Default omits large parameters.",
@@ -50,9 +38,7 @@ READ_TOOLS = [
     tool("basin_events", "Query recorded events by step/stage with original evidence pointers. Field selects within values, e.g. /action.",
          dict(PAGE, run_id=STRING, step={"type": "integer", "minimum": 0}, stage=STRING, field=STRING), ("run_id",)),
     tool("basin_read_artifact", "Read a verified original artifact. JSONL requires a 1-based line. Optional JSON Pointer narrows data.",
-         {"run_id": STRING, "name": STRING, "line": {"type": "integer", "minimum": 1}, "pointer": STRING,
-          "source": STRING, "byte_offset": {"type": "integer", "minimum": 0},
-          "byte_limit": {"type": "integer", "minimum": 1, "maximum": 4096}},
+         {"run_id": STRING, "name": STRING, "line": {"type": "integer", "minimum": 1}, "pointer": STRING},
          ("run_id", "name")),
     tool("basin_analyze", "Compute observed statistics, facts and limitations. Statistics are paginated; prefix filters keys such as execution/action/.",
          dict(PAGE, run_id=STRING, prefix=STRING), ("run_id",)),
@@ -70,12 +56,6 @@ READ_TOOLS = [
 ]
 
 IMPORT_TOOLS = [
-    tool("basin_import_training_config", "Import a sealed training-config bundle or a version-2 plan, optionally paired with launch and runtime evidence; source paths remain operator-scoped.",
-         {"source": STRING, "path": STRING, "run_id": STRING,
-          "launch_path": STRING, "runtime_path": STRING,
-          "resolved_plan_path": STRING}, ("source", "path", "run_id"), write=True),
-    tool("basin_import_dual_axis", "Import a sealed diagnostic bundle from an operator-configured source; stream-hash external tensors without deserialization.",
-         {"source": STRING, "path": STRING, "run_id": STRING}, ("source", "path", "run_id"), write=True),
     tool("basin_import_torchlens", "Import an existing Basin TorchLens JSON export from a configured source alias. No Python object deserialization or model execution.",
          {"source": STRING, "path": STRING, "run_id": STRING}, ("source", "path", "run_id"), write=True),
     tool("basin_import_native", "Copy an existing collector JSON from a configured source alias into Basin. Never overwrites evidence.",
@@ -149,25 +129,6 @@ class BasinAPI:
 
     def _dispatch(self, name, args):
         run_id = args.get("run_id")
-        if name == "basin_timeline":
-            result = timeline(self.store, run_id, **{k: args[k] for k in ("axis", "start", "end", "offset", "limit") if k in args})
-            if "field" in args:
-                for event in result["events"]["items"]:
-                    event["values"] = pointer(event["values"], args["field"])
-            return result
-        if name == "basin_locate_deviation":
-            result = locate_deviation(self.store, run_id, axis=args.get("axis", "probe"), metric=args.get("metric"))
-            section = args.get("section", "deviations")
-            rows = result[section]
-            for key in ("deviations", "absolute_failures", "gaps", "trends"):
-                result[key + "_count"] = len(result.pop(key))
-            result[section] = page(rows, args)
-            return result
-        if name == "basin_branch_compare":
-            result = branch_compare(self.store, args["left"], args["right"])
-            result["pairs"] = page(result["pairs"], args)
-            result["missing"] = page(result["missing"], args)
-            return result
         if name == "basin_history":
             rows = self.store.history()
             for key in ("source_run", "evidence_kind"):
@@ -195,34 +156,6 @@ class BasinAPI:
                 result["items"] = narrowed
             return result
         if name == "basin_read_artifact":
-            if "source" in args:
-                if "line" in args or "pointer" in args:
-                    raise ValueError("External binary reads use byte ranges only")
-                record = self.store.get(run_id)[0]
-                spec = record.get("external_artifacts", {}).get(args["name"])
-                if spec is None or args["source"] not in self.sources:
-                    raise ValueError("External artifact or source alias is not registered")
-                path = child(child(self.sources[args["source"]], record["source_path"]), args["name"])
-                offset, limit = args.get("byte_offset", 0), args.get("byte_limit", 4096)
-                h, count, selected = hashlib.sha256(), 0, bytearray()
-                with path.open("rb") as stream:
-                    for block in iter(lambda: stream.read(1024 * 1024), b""):
-                        end = count + len(block)
-                        if end > offset and count < offset + limit:
-                            selected.extend(block[max(0, offset-count):min(len(block), offset+limit-count)])
-                        h.update(block)
-                        count = end
-                        if count > 4 * 1024**3:
-                            raise ValueError("External artifact exceeds streaming bound")
-                if count != spec["bytes"] or h.hexdigest() != spec["sha256"]:
-                    raise ValueError("External artifact bytes changed")
-                if offset >= count:
-                    raise ValueError("Byte offset outside artifact")
-                return {"encoding": "base64_raw_bytes", "data": base64.b64encode(selected).decode(),
-                        "byte_offset": offset, "returned_bytes": len(selected), "total_bytes": count,
-                        "sha256": h.hexdigest(), "verification": "source_bytes_hashed"}
-            if "byte_offset" in args or "byte_limit" in args:
-                raise ValueError("Binary ranges require a configured source")
             manifest = self.store.verify(run_id)
             name = "artifacts/" + args["name"]
             if name not in manifest["files"]:
@@ -263,13 +196,6 @@ class BasinAPI:
         if args["source"] not in self.sources:
             raise ToolError("invalid_arguments", "Source alias was not configured by the operator")
         source = self.sources[args["source"]]
-        if name == "basin_import_training_config":
-            return import_training_config(self.store, source, args["path"], run_id,
-                                          launch_path=args.get("launch_path"),
-                                          runtime_path=args.get("runtime_path"),
-                                          resolved_plan_path=args.get("resolved_plan_path"))
-        if name == "basin_import_dual_axis":
-            return import_dual_axis(self.store, source, args["path"], run_id)
         if name == "basin_import_torchlens":
             return import_torchlens(self.store, child(source, args["path"]), run_id)
         if name == "basin_import_native":

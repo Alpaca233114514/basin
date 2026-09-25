@@ -67,7 +67,7 @@ class Store:
                     record, events = self.get(path.name)
                     rows.append({key: record.get(key) for key in
                                  ("id", "source_run", "adapter", "status", "evidence_kind", "gate")}
-                                | {"events": record.get("event_count", len(events)), "integrity": "verified"})
+                                | {"events": len(events), "integrity": "verified"})
                 except (ValueError, OSError, KeyError, TypeError) as exc:
                     rows.append({"id": path.name, "integrity": "invalid", "error": str(exc)})
         return rows
